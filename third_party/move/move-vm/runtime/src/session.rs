@@ -2,15 +2,10 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    config::VMConfig,
-    data_cache::TransactionDataCache,
-    loader::{LoadedFunction, ModuleStorageAdapter},
-    module_traversal::TraversalContext,
-    move_vm::MoveVM,
-    native_extensions::NativeContextExtensions,
-};
+use std::{borrow::Borrow, sync::Arc};
+
 use bytes::Bytes;
+
 use move_binary_format::{
     compatibility::Compatibility,
     errors::*,
@@ -18,7 +13,7 @@ use move_binary_format::{
 };
 use move_core_types::{
     account_address::AccountAddress,
-    effects::{ChangeSet, Changes},
+    effects::{Changes, ChangeSet},
     gas_algebra::NumBytes,
     identifier::IdentStr,
     language_storage::{ModuleId, TypeTag},
@@ -29,13 +24,23 @@ use move_vm_types::{
     loaded_data::runtime_types::{StructNameIndex, StructType, Type},
     values::{GlobalValue, Value},
 };
-use std::{borrow::Borrow, sync::Arc};
+
+use crate::{
+    config::VMConfig,
+    data_cache::TransactionDataCache,
+    loader::{LoadedFunction, ModuleStorageAdapter},
+    module_traversal::TraversalContext,
+    move_vm::MoveVM,
+    native_extensions::NativeContextExtensions,
+};
 
 pub struct Session<'r, 'l> {
     pub(crate) move_vm: &'l MoveVM,
     pub(crate) data_cache: TransactionDataCache<'r>,
     pub(crate) module_store: ModuleStorageAdapter,
     pub(crate) native_extensions: NativeContextExtensions<'r>,
+    #[cfg(feature = "footprint")]
+    pub(crate) footprints: crate::interpreter::footprint::Footprints,
 }
 
 /// Serialized return values from function/script execution
@@ -95,6 +100,7 @@ impl<'r, 'l> Session<'r, 'l> {
             gas_meter,
             traversal_context,
             &mut self.native_extensions,
+            #[cfg(feature = "footprint")] &mut self.footprints,
             bypass_declared_entry_check,
         )?;
         Ok(())
@@ -121,6 +127,7 @@ impl<'r, 'l> Session<'r, 'l> {
             gas_meter,
             traversal_context,
             &mut self.native_extensions,
+            #[cfg(feature = "footprint")] &mut self.footprints,
             bypass_declared_entry_check,
         )
     }
@@ -142,6 +149,7 @@ impl<'r, 'l> Session<'r, 'l> {
             gas_meter,
             traversal_context,
             &mut self.native_extensions,
+            #[cfg(feature = "footprint")] &mut self.footprints,
             true,
         )
     }
@@ -179,6 +187,7 @@ impl<'r, 'l> Session<'r, 'l> {
             gas_meter,
             traversal_context,
             &mut self.native_extensions,
+            #[cfg(feature = "footprint")] &mut self.footprints,
         )
     }
 
@@ -545,4 +554,11 @@ pub struct LoadedFunctionInstantiation {
     pub ty_args: Vec<Type>,
     pub param_tys: Vec<Type>,
     pub return_tys: Vec<Type>,
+}
+
+#[cfg(feature = "footprint")]
+impl<'r, 'l> Session<'r, 'l> {
+    pub fn footprints(&self) -> Vec<crate::witnessing::Footprint> {
+        self.footprints.clone().data
+    }
 }

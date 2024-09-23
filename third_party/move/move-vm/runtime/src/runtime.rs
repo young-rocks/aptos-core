@@ -2,6 +2,30 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{borrow::Borrow, collections::BTreeSet, sync::Arc};
+
+use move_binary_format::{
+    access::ModuleAccess,
+    binary_views::BinaryIndexedView,
+    compatibility::Compatibility,
+    CompiledModule,
+    errors::{Location, PartialVMError, PartialVMResult, verification_error, VMResult},
+    file_format::{LocalIndex, SignatureIndex}, IndexKind, normalized,
+};
+use move_bytecode_verifier::script_signature;
+use move_core_types::{
+    account_address::AccountAddress,
+    identifier::{Identifier, IdentStr},
+    language_storage::{ModuleId, TypeTag},
+    value::MoveTypeLayout,
+    vm_status::StatusCode,
+};
+use move_vm_types::{
+    gas::GasMeter,
+    loaded_data::runtime_types::Type,
+    values::{Locals, Reference, Value, VMValueCast},
+};
+
 use crate::{
     config::VMConfig,
     data_cache::TransactionDataCache,
@@ -12,28 +36,6 @@ use crate::{
     native_functions::{NativeFunction, NativeFunctions},
     session::{LoadedFunctionInstantiation, SerializedReturnValues},
 };
-use move_binary_format::{
-    access::ModuleAccess,
-    binary_views::BinaryIndexedView,
-    compatibility::Compatibility,
-    errors::{verification_error, Location, PartialVMError, PartialVMResult, VMResult},
-    file_format::{LocalIndex, SignatureIndex},
-    normalized, CompiledModule, IndexKind,
-};
-use move_bytecode_verifier::script_signature;
-use move_core_types::{
-    account_address::AccountAddress,
-    identifier::{IdentStr, Identifier},
-    language_storage::{ModuleId, TypeTag},
-    value::MoveTypeLayout,
-    vm_status::StatusCode,
-};
-use move_vm_types::{
-    gas::GasMeter,
-    loaded_data::runtime_types::Type,
-    values::{Locals, Reference, VMValueCast, Value},
-};
-use std::{borrow::Borrow, collections::BTreeSet, sync::Arc};
 
 /// An instantiation of the MoveVM.
 pub(crate) struct VMRuntime {
@@ -367,6 +369,8 @@ impl VMRuntime {
         gas_meter: &mut impl GasMeter,
         traversal_context: &mut TraversalContext,
         extensions: &mut NativeContextExtensions,
+        #[cfg(feature = "footprint")]
+        footprints: &mut crate::interpreter::footprint::Footprints,
     ) -> VMResult<SerializedReturnValues> {
         let param_tys = param_tys
             .into_iter()
@@ -400,6 +404,7 @@ impl VMRuntime {
             traversal_context,
             extensions,
             &self.loader,
+            #[cfg(feature = "footprint")] footprints,
         )?;
 
         let serialized_return_values = self
@@ -441,6 +446,8 @@ impl VMRuntime {
         gas_meter: &mut impl GasMeter,
         traversal_context: &mut TraversalContext,
         extensions: &mut NativeContextExtensions,
+        #[cfg(feature = "footprint")]
+        footprints: &mut crate::interpreter::footprint::Footprints,
         bypass_declared_entry_check: bool,
     ) -> VMResult<SerializedReturnValues> {
         let (module, function, instantiation) =
@@ -456,6 +463,7 @@ impl VMRuntime {
             gas_meter,
             traversal_context,
             extensions,
+            #[cfg(feature = "footprint")] footprints,
             bypass_declared_entry_check,
         )
     }
@@ -470,6 +478,8 @@ impl VMRuntime {
         gas_meter: &mut impl GasMeter,
         traversal_context: &mut TraversalContext,
         extensions: &mut NativeContextExtensions,
+        #[cfg(feature = "footprint")]
+        footprints: &mut crate::interpreter::footprint::Footprints,
         bypass_declared_entry_check: bool,
     ) -> VMResult<SerializedReturnValues> {
         let LoadedFunctionInstantiation {
@@ -517,6 +527,7 @@ impl VMRuntime {
             gas_meter,
             traversal_context,
             extensions,
+            #[cfg(feature = "footprint")] footprints,
         )
     }
 
@@ -531,6 +542,8 @@ impl VMRuntime {
         gas_meter: &mut impl GasMeter,
         traversal_context: &mut TraversalContext,
         extensions: &mut NativeContextExtensions,
+        #[cfg(feature = "footprint")]
+        footprints: &mut crate::interpreter::footprint::Footprints,
     ) -> VMResult<()> {
         // load the script, perform verification
         let (
@@ -554,6 +567,7 @@ impl VMRuntime {
             gas_meter,
             traversal_context,
             extensions,
+            #[cfg(feature = "footprint")] footprints,
         )?;
         Ok(())
     }

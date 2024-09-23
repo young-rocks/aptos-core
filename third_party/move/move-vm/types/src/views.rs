@@ -1,11 +1,13 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::delayed_values::delayed_field_id::DelayedFieldID;
+use std::mem::size_of_val;
+
 use move_core_types::{
     account_address::AccountAddress, gas_algebra::AbstractMemorySize, language_storage::TypeTag,
 };
-use std::mem::size_of_val;
+
+use crate::delayed_values::delayed_field_id::DelayedFieldID;
 
 /// Trait that provides an abstract view into a Move type.
 ///
@@ -140,6 +142,9 @@ pub trait ValueVisitor {
     fn visit_u256(&mut self, depth: usize, val: move_core_types::u256::U256);
     fn visit_bool(&mut self, depth: usize, val: bool);
     fn visit_address(&mut self, depth: usize, val: AccountAddress);
+
+    fn visit_container(&mut self, _raw_address: usize, _depth: usize) {}
+    fn visit_indexed(&mut self, _raw_address: usize, _depth: usize, _idx: usize) {}
 
     fn visit_struct(&mut self, depth: usize, len: usize) -> bool;
     fn visit_vec(&mut self, depth: usize, len: usize) -> bool;

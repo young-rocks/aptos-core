@@ -2,6 +2,17 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
+use move_binary_format::{
+    CompiledModule,
+    errors::{Location, PartialVMError, VMResult},
+};
+use move_core_types::{
+    account_address::AccountAddress, identifier::Identifier, language_storage::ModuleId,
+    metadata::Metadata, resolver::MoveResolver,
+};
+
 use crate::{
     config::VMConfig,
     data_cache::TransactionDataCache,
@@ -11,15 +22,6 @@ use crate::{
     runtime::VMRuntime,
     session::Session,
 };
-use move_binary_format::{
-    errors::{Location, PartialVMError, VMResult},
-    CompiledModule,
-};
-use move_core_types::{
-    account_address::AccountAddress, identifier::Identifier, language_storage::ModuleId,
-    metadata::Metadata, resolver::MoveResolver,
-};
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct MoveVM {
@@ -82,6 +84,9 @@ impl MoveVM {
             ),
             module_store: ModuleStorageAdapter::new(self.runtime.module_storage()),
             native_extensions,
+            #[cfg(
+                feature = "footprint"
+            )] footprints: crate::interpreter::footprint::Footprints::default(),
         }
     }
 
@@ -104,6 +109,9 @@ impl MoveVM {
             ),
             module_store: ModuleStorageAdapter::new(module_storage),
             native_extensions,
+            #[cfg(
+                feature = "footprint"
+            )] footprints: crate::interpreter::footprint::Footprints::default(),
         }
     }
 

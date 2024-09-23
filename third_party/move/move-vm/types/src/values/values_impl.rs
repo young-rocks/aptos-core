@@ -4,10 +4,19 @@
 
 #![allow(clippy::arc_with_non_send_sync)]
 
-use crate::{
-    loaded_data::runtime_types::Type,
-    views::{ValueView, ValueVisitor},
+use std::{
+    cell::RefCell,
+    fmt::{self, Debug, Display, Formatter},
+    iter,
+    rc::Rc,
 };
+
+use serde::{
+    de::Error as DeError,
+    Deserialize,
+    ser::{Error as SerError, SerializeSeq, SerializeTuple},
+};
+
 use move_binary_format::{
     errors::*,
     file_format::{Constant, SignatureToken},
@@ -18,14 +27,16 @@ use move_core_types::{
     gas_algebra::AbstractMemorySize,
     u256,
     value::{MoveStructLayout, MoveTypeLayout},
-    vm_status::{sub_status::NFE_VECTOR_ERROR_BASE, StatusCode},
+    vm_status::{StatusCode, sub_status::NFE_VECTOR_ERROR_BASE},
 };
-use std::{
-    cell::RefCell,
-    fmt::{self, Debug, Display, Formatter},
-    iter,
-    rc::Rc,
+use move_core_types::value::{MoveStruct, MoveValue};
+
+use crate::{
+    loaded_data::runtime_types::Type,
+    views::{ValueView, ValueVisitor},
 };
+use crate::delayed_values::delayed_field_id::DelayedFieldID;
+use crate::value_serde::{CustomDeserializer, CustomSerializer, RelaxedCustomSerDe};
 
 /***************************************************************************************
  *
@@ -164,7 +175,7 @@ enum ReferenceImpl {
 pub struct Value(pub(crate) ValueImpl);
 
 /// An integer value in Move.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum IntegerValue {
     U8(u8),
     U16(u16),
@@ -2841,8 +2852,9 @@ impl Display for Locals {
 
 #[allow(dead_code)]
 pub mod debug {
-    use super::*;
     use std::fmt::Write;
+
+    use super::*;
 
     fn print_delayed_value<B: Write>(buf: &mut B) -> PartialVMResult<()> {
         debug_write!(buf, "<?>")
@@ -3027,13 +3039,6 @@ pub mod debug {
  *   is to involve an explicit representation of the type layout.
  *
  **************************************************************************************/
-use crate::value_serde::{CustomDeserializer, CustomSerializer, RelaxedCustomSerDe};
-use serde::{
-    de::Error as DeError,
-    ser::{Error as SerError, SerializeSeq, SerializeTuple},
-    Deserialize,
-};
-
 impl Value {
     pub fn simple_deserialize(blob: &[u8], layout: &MoveTypeLayout) -> Option<Value> {
         let seed = DeserializationSeed {
@@ -3432,6 +3437,7 @@ impl Drop for Locals {
 impl Container {
     fn visit_impl(&self, visitor: &mut impl ValueVisitor, depth: usize) {
         use Container::*;
+        visitor.visit_container(self.raw_address(), depth);
 
         match self {
             Locals(_) => unreachable!("Should not ba able to visit a Locals container directly"),
@@ -3464,7 +3470,7 @@ impl Container {
 
     fn visit_indexed(&self, visitor: &mut impl ValueVisitor, depth: usize, idx: usize) {
         use Container::*;
-
+        visitor.visit_indexed(self.raw_address(), depth, idx);
         match self {
             Locals(r) | Vec(r) | Struct(r) => r.borrow()[idx].visit_impl(visitor, depth + 1),
             VecU8(vals) => visitor.visit_u8(depth + 1, vals.borrow()[idx]),
@@ -3689,10 +3695,12 @@ impl GlobalValue {
  **************************************************************************************/
 #[cfg(feature = "fuzzing")]
 pub mod prop {
-    use super::*;
+    use proptest::{collection::vec, prelude::*};
+
     #[allow(unused_imports)]
     use move_core_types::value::{MoveStruct, MoveValue};
-    use proptest::{collection::vec, prelude::*};
+
+    use super::*;
 
     pub fn value_strategy_with_layout(layout: &MoveTypeLayout) -> impl Strategy<Value = Value> {
         use MoveTypeLayout as L;
@@ -3820,9 +3828,6 @@ pub mod prop {
     }
 }
 
-use crate::delayed_values::delayed_field_id::DelayedFieldID;
-use move_core_types::value::{MoveStruct, MoveValue};
-
 impl ValueImpl {
     pub fn as_move_value(&self, layout: &MoveTypeLayout) -> MoveValue {
         use MoveTypeLayout as L;
@@ -3895,4 +3900,21 @@ impl Value {
     pub fn as_move_value(&self, layout: &MoveTypeLayout) -> MoveValue {
         self.0.as_move_value(layout)
     }
+}
+
+
+impl Value {
+    pub fn copy_value(&self) -> PartialVMResult<Self> {
+        Ok(Value(self.0.copy_value()?))
+    }
+    pub fn is_ref_value(&self) -> bool {
+        match &self.0 {
+            ValueImpl::ContainerRef(_) | ValueImpl::IndexedRef(_) => true,
+            _ => false
+        }
+    }
+}
+
+impl StructRef {
+    pub fn raw_address(&self) -> usize { self.0.container().raw_address() }
 }

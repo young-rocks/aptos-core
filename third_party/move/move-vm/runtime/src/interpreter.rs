@@ -2,16 +2,15 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    access_control::AccessControlState,
-    data_cache::TransactionDataCache,
-    loader::{Function, Loader, ModuleStorageAdapter, Resolver},
-    module_traversal::TraversalContext,
-    native_extensions::NativeContextExtensions,
-    native_functions::NativeContext,
-    trace,
+use std::{
+    cmp::min,
+    collections::{BTreeMap, HashSet, VecDeque},
+    fmt::Write,
+    sync::Arc,
 };
+
 use fail::fail_point;
+
 use move_binary_format::{
     errors::*,
     file_format::{
@@ -34,17 +33,17 @@ use move_vm_types::{
     },
     natives::function::NativeResult,
     values::{
-        self, GlobalValue, IntegerValue, Locals, Reference, Struct, StructRef, VMValueCast, Value,
-        Vector, VectorRef,
+        self, GlobalValue, IntegerValue, Locals, Reference, Struct, StructRef, Value, Vector,
+        VectorRef, VMValueCast,
     },
     views::TypeView,
 };
-use std::{
-    cmp::min,
-    collections::{BTreeMap, HashSet, VecDeque},
-    fmt::Write,
-    sync::Arc,
-};
+
+use crate::{access_control::AccessControlState, data_cache::TransactionDataCache, loader::{Function, Loader, ModuleStorageAdapter, Resolver}, module_traversal::TraversalContext, native_extensions::NativeContextExtensions, native_functions::NativeContext, trace};
+use crate::witnessing::Footprint;
+use crate::interpreter::footprint::footprint_args_processing;
+
+pub(crate) mod footprint;
 
 macro_rules! set_err_info {
     ($frame:ident, $e:expr) => {{
@@ -68,6 +67,7 @@ pub(crate) struct Interpreter {
     access_control: AccessControlState,
     /// Set of modules that exists on call stack.
     active_modules: HashSet<ModuleId>,
+    footprints: footprint::Footprints,
 }
 
 struct TypeWithLoader<'a, 'b> {
@@ -94,15 +94,17 @@ impl Interpreter {
         traversal_context: &mut TraversalContext,
         extensions: &mut NativeContextExtensions,
         loader: &Loader,
+        #[cfg(feature = "footprint")]
+        footprints: &mut footprint::Footprints,
     ) -> VMResult<Vec<Value>> {
-        Interpreter {
+        let (rets, mut fps) = Interpreter {
             operand_stack: Stack::new(),
             call_stack: CallStack::new(),
             paranoid_type_checks: loader.vm_config().paranoid_type_checks,
             access_control: AccessControlState::default(),
             active_modules: HashSet::new(),
-        }
-        .execute_main(
+            footprints: footprint::Footprints::default(),
+        }.execute_main(
             loader,
             data_store,
             module_store,
@@ -112,7 +114,11 @@ impl Interpreter {
             function,
             ty_args,
             args,
-        )
+        )?;
+        #[cfg(feature = "footprint")]
+        footprints.data.append(&mut fps);
+
+        Ok(rets)
     }
 
     /// Main loop for the execution of a function.
@@ -132,7 +138,10 @@ impl Interpreter {
         function: Arc<Function>,
         ty_args: Vec<Type>,
         args: Vec<Value>,
-    ) -> VMResult<Vec<Value>> {
+    ) -> VMResult<(Vec<Value>, Vec<Footprint>)> {
+        #[cfg(feature = "footprint")]
+        footprint_args_processing(&mut self, &function, &args);
+
         let mut locals = Locals::new(function.local_count());
         for (i, value) in args.into_iter().enumerate() {
             locals
@@ -196,7 +205,7 @@ impl Interpreter {
                         self.access_control
                             .exit_function(current_frame.function.as_ref())
                             .map_err(|e| self.set_location(e))?;
-                        return Ok(self.operand_stack.value);
+                        return Ok((self.operand_stack.value, self.footprints.data));
                     }
                 },
                 ExitCode::Call(fh_idx) => {
@@ -2150,9 +2159,16 @@ impl Frame {
             };
         }
 
-        let code = self.function.code();
+        let code = self.function.code().to_vec();
         loop {
             for instruction in &code[self.pc as usize..] {
+                #[cfg(feature = "footprint")]
+                crate::footprint!(
+                    self,
+                    instruction,
+                    resolver,
+                    interpreter
+                )?;
                 trace!(
                     &self.function,
                     &self.locals,

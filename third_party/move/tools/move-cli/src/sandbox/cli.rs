@@ -2,24 +2,27 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    sandbox::{
-        self,
-        utils::{on_disk_state_view::OnDiskStateView, PackageContext},
-    },
-    Move, NativeFunctionRecord, DEFAULT_BUILD_DIR,
+use std::{
+    fs,
+    path::{Path, PathBuf},
 };
+
 use anyhow::Result;
 use clap::Parser;
+
 use move_core_types::{
     errmap::ErrorMapping, language_storage::TypeTag, parser,
     transaction_argument::TransactionArgument,
 };
 use move_package::compilation::package_layout::CompiledPackageLayout;
 use move_vm_test_utils::gas_schedule::CostTable;
-use std::{
-    fs,
-    path::{Path, PathBuf},
+
+use crate::{
+    DEFAULT_BUILD_DIR,
+    Move, NativeFunctionRecord, sandbox::{
+        self,
+        utils::{on_disk_state_view::OnDiskStateView, PackageContext},
+    },
 };
 
 #[derive(Parser)]
@@ -101,6 +104,8 @@ pub enum SandboxCommand {
         /// deleted resources) will NOT be committed to disk.
         #[clap(long = "dry-run", short = 'n')]
         dry_run: bool,
+        #[clap(long = "witness", short = 'w')]
+        gen_witness: bool,
     },
     /// Run expected value tests using the given batch file.
     #[clap(name = "exp-test")]
@@ -227,6 +232,7 @@ impl SandboxCommand {
                 type_args,
                 gas_budget,
                 dry_run,
+                gen_witness,
             } => {
                 let context =
                     PackageContext::new(&move_args.package_path, &move_args.build_config)?;
@@ -245,6 +251,7 @@ impl SandboxCommand {
                     *gas_budget,
                     bytecode_version,
                     *dry_run,
+                    *gen_witness,
                     move_args.verbose,
                 )
             },
