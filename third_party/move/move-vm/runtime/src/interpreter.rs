@@ -67,7 +67,6 @@ pub(crate) struct Interpreter {
     access_control: AccessControlState,
     /// Set of modules that exists on call stack.
     active_modules: HashSet<ModuleId>,
-    footprints: footprint::Footprints,
 }
 
 struct TypeWithLoader<'a, 'b> {
@@ -97,13 +96,12 @@ impl Interpreter {
         #[cfg(feature = "footprint")]
         footprints: &mut footprint::Footprints,
     ) -> VMResult<Vec<Value>> {
-        let (rets, mut fps) = Interpreter {
+        let rets = Interpreter {
             operand_stack: Stack::new(),
             call_stack: CallStack::new(),
             paranoid_type_checks: loader.vm_config().paranoid_type_checks,
             access_control: AccessControlState::default(),
             active_modules: HashSet::new(),
-            footprints: footprint::Footprints::default(),
         }.execute_main(
             loader,
             data_store,
@@ -114,9 +112,8 @@ impl Interpreter {
             function,
             ty_args,
             args,
+            #[cfg(feature = "footprint")] footprints,
         )?;
-        #[cfg(feature = "footprint")]
-        footprints.data.append(&mut fps);
 
         Ok(rets)
     }
@@ -138,9 +135,11 @@ impl Interpreter {
         function: Arc<Function>,
         ty_args: Vec<Type>,
         args: Vec<Value>,
-    ) -> VMResult<(Vec<Value>, Vec<Footprint>)> {
         #[cfg(feature = "footprint")]
-        footprint_args_processing(&mut self, &function, &args);
+        footprints: &mut footprint::Footprints,
+    ) -> VMResult<Vec<Value>> {
+        #[cfg(feature = "footprint")]
+        footprint_args_processing(&function, &args, footprints);
 
         let mut locals = Locals::new(function.local_count());
         for (i, value) in args.into_iter().enumerate() {
@@ -171,7 +170,7 @@ impl Interpreter {
             let resolver = current_frame.resolver(loader, module_store);
             let exit_code =
                 current_frame //self
-                    .execute_code(&resolver, &mut self, data_store, module_store, gas_meter)
+                    .execute_code(&resolver, &mut self, data_store, module_store, gas_meter, #[cfg(feature = "footprint")] footprints)
                     .map_err(|err| self.attach_state_if_invariant_violation(err, &current_frame))?;
             match exit_code {
                 ExitCode::Return => {
@@ -205,7 +204,7 @@ impl Interpreter {
                         self.access_control
                             .exit_function(current_frame.function.as_ref())
                             .map_err(|e| self.set_location(e))?;
-                        return Ok((self.operand_stack.value, self.footprints.data));
+                        return Ok(self.operand_stack.value);
                     }
                 },
                 ExitCode::Call(fh_idx) => {
@@ -1526,8 +1525,10 @@ impl Frame {
         data_store: &mut TransactionDataCache,
         module_store: &ModuleStorageAdapter,
         gas_meter: &mut impl GasMeter,
+        #[cfg(feature = "footprint")]
+        footprints: &mut footprint::Footprints,
     ) -> VMResult<ExitCode> {
-        self.execute_code_impl(resolver, interpreter, data_store, module_store, gas_meter)
+        self.execute_code_impl(resolver, interpreter, data_store, module_store, gas_meter, #[cfg(feature = "footprint")] footprints)
             .map_err(|e| {
                 let e = if cfg!(feature = "testing") || cfg!(feature = "stacktrace") {
                     e.with_exec_state(interpreter.get_internal_state())
@@ -2147,6 +2148,8 @@ impl Frame {
         data_store: &mut TransactionDataCache,
         module_store: &ModuleStorageAdapter,
         gas_meter: &mut impl GasMeter,
+        #[cfg(feature = "footprint")]
+        footprints: &mut footprint::Footprints,
     ) -> PartialVMResult<ExitCode> {
         use SimpleInstruction as S;
 
@@ -2167,7 +2170,8 @@ impl Frame {
                     self,
                     instruction,
                     resolver,
-                    interpreter
+                    interpreter,
+                    footprints
                 )?;
                 trace!(
                     &self.function,

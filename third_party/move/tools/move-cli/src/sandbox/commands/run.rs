@@ -124,6 +124,36 @@ move run` must be applied to a module inside `storage/`",
         ),
     };
 
+    if gen_witness {
+        let fp = session.footprints();
+        let file_path = state.build_dir().parent().unwrap().join("witnesses");
+        fs::create_dir_all(file_path.as_path())?;
+        let script_name = match script_name_opt {
+            None => script_path
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            Some(name) => name.to_string(),
+        };
+        let result_path = file_path
+            .join(format!(
+                "{}-{}",
+                script_name,
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            ))
+            .with_extension("json");
+        println!("{}", result_path.display());
+        let mut f = fs::File::options().write(true).create_new(true).open(
+            result_path.as_path(),
+        )?;
+        f.write_all(serde_json::to_string_pretty(&fp)?.as_bytes())?;
+        println!("witness saved at {}", result_path.display());
+    }
+
     if let Err(err) = res {
         explain_execution_error(
             error_descriptions,
@@ -136,35 +166,6 @@ move run` must be applied to a module inside `storage/`",
             txn_args,
         )
     } else {
-        if gen_witness {
-            let fp = session.footprints();
-            let file_path = state.build_dir().parent().unwrap().join("witnesses");
-            fs::create_dir_all(file_path.as_path())?;
-            let script_name = match script_name_opt {
-                None => script_path
-                    .file_stem()
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string(),
-                Some(name) => name.to_string(),
-            };
-            let result_path = file_path
-                .join(format!(
-                    "{}-{}",
-                    script_name,
-                    SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                ))
-                .with_extension("json");
-            println!("{}", result_path.display());
-            let mut f = fs::File::options().write(true).create_new(true).open(
-                result_path.as_path(),
-            )?;
-            f.write_all(serde_json::to_string_pretty(&fp)?.as_bytes())?;
-            println!("witness saved at {}", result_path.display());
-        }
         let changeset = session.finish().map_err(|e| e.into_vm_status())?;
         if verbose {
             explain_execution_effects(&changeset, state)?

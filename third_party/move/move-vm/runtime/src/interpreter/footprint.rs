@@ -66,11 +66,7 @@ impl FootprintState {
     }
 }
 
-pub(crate) fn footprint_args_processing(
-    interp: &mut Interpreter,
-    function: &Arc<Function>,
-    args: &Vec<Value>,
-) {
+pub(crate) fn footprint_args_processing(function: &Arc<Function>, args: &Vec<Value>, footprints: &mut Footprints) {
     let module_id = function.module_id();
     let function_index = function.index().into_index();
     let mut values = Vec::new();
@@ -79,11 +75,11 @@ pub(crate) fn footprint_args_processing(
             items: value_items,
             container_sub_indexes: value_indexes,
         } = TracedValueBuilder::new(value)
-            .build(&interp.footprints.state.reverse_local_value_addressings);
-        interp.footprints.state.add_local(0, i, value_indexes);
+            .build(&footprints.state.reverse_local_value_addressings);
+        footprints.state.add_local(0, i, value_indexes);
         values.push(value_items);
     }
-    interp.footprints.data.push(Footprint {
+    footprints.data.push(Footprint {
         op: 0,
         module_id: None,
         function_id: 0,
@@ -104,9 +100,9 @@ pub(crate) fn footprint_args_processing(
 
 #[macro_export]
 macro_rules! footprint {
-    ($frame:expr, $instr:tt, $resolver:expr, $interp:expr) => {
+    ($frame:expr, $instr:tt, $resolver:expr, $interp:expr, $footprints:expr) => {
         // only do footprint when the feature enabled
-        $crate::interpreter::footprint::footprinting($frame, $instr, $resolver, $interp)
+        $crate::interpreter::footprint::footprinting($frame, $instr, $resolver, $interp, $footprints)
     };
 }
 
@@ -115,6 +111,7 @@ pub(crate) fn footprinting(
     instr: &Bytecode,
     resolver: &Resolver,
     interp: &mut Interpreter,
+    footprints: &mut Footprints,
 ) -> PartialVMResult<()> {
     let function_desc = &frame.function;
     let locals = &frame.locals;
@@ -144,7 +141,7 @@ pub(crate) fn footprinting(
                 function_id: caller.function.index().into_index(),
                 pc: caller.pc,
             });
-            interp.footprints.state.remove_locals(frame_index);
+            footprints.state.remove_locals(frame_index);
             Operation::Ret { caller }
         },
         Bytecode::BrTrue(offset) => {
@@ -252,35 +249,33 @@ pub(crate) fn footprinting(
             Operation::CopyLoc {
                 local_index: *idx,
                 local: TracedValueBuilder::new(&local)
-                    .build(&interp.footprints.state.reverse_local_value_addressings)
+                    .build(&footprints.state.reverse_local_value_addressings)
                     .items,
             }
         },
         Bytecode::MoveLoc(idx) => {
-            interp
-                .footprints
+            footprints
                 .state
                 .remove_local(frame_index, *idx as usize);
             let local = locals.copy_loc(*idx as usize)?;
             Operation::MoveLoc {
                 local_index: *idx,
                 local: TracedValueBuilder::new(&local)
-                    .build(&interp.footprints.state.reverse_local_value_addressings)
+                    .build(&footprints.state.reverse_local_value_addressings)
                     .items,
             }
         },
         Bytecode::StLoc(idx) => {
             let new_value = interp.operand_stack.last_n(1)?.last().unwrap();
             let new_value = TracedValueBuilder::new(&new_value)
-                .build(&interp.footprints.state.reverse_local_value_addressings);
+                .build(&footprints.state.reverse_local_value_addressings);
 
-            interp
-                .footprints
+            footprints
                 .state
                 .remove_local(frame_index, *idx as usize);
             // value stored to loc only have 1 reference on it
             // so we can hook here to index every sub items by it rc-ptr.
-            interp.footprints.state.add_local(
+            footprints.state.add_local(
                 frame_index,
                 *idx as usize,
                 new_value.container_sub_indexes,
@@ -295,7 +290,7 @@ pub(crate) fn footprinting(
                 local_index: *idx,
                 old_local: old_local.map(|v| {
                     TracedValueBuilder::new(&v)
-                        .build(&interp.footprints.state.reverse_local_value_addressings)
+                        .build(&footprints.state.reverse_local_value_addressings)
                         .items
                 }),
                 new_value: new_value.items,
@@ -308,7 +303,7 @@ pub(crate) fn footprinting(
                 args: interp
                     .operand_stack
                     .last_n(func.param_count())?
-                    .map(|t| TracedValueBuilder::new(t).build(&interp.footprints.state.reverse_local_value_addressings).items)
+                    .map(|t| TracedValueBuilder::new(t).build(&footprints.state.reverse_local_value_addressings).items)
                     .collect::<Vec<_>>(),
             }
         },
@@ -320,7 +315,7 @@ pub(crate) fn footprinting(
                 args: interp
                     .operand_stack
                     .last_n(func.param_count())?
-                    .map(|t| TracedValueBuilder::new(t).build(&interp.footprints.state.reverse_local_value_addressings).items)
+                    .map(|t| TracedValueBuilder::new(t).build(&footprints.state.reverse_local_value_addressings).items)
                     .collect::<Vec<_>>(),
             }
         },
@@ -333,7 +328,7 @@ pub(crate) fn footprinting(
                 args: interp
                     .operand_stack
                     .last_n(field_count as usize)?
-                    .map(|t| TracedValueBuilder::new(t).build(&interp.footprints.state.reverse_local_value_addressings).items)
+                    .map(|t| TracedValueBuilder::new(t).build(&footprints.state.reverse_local_value_addressings).items)
                     .collect::<Vec<_>>(),
             }
         },
@@ -345,7 +340,7 @@ pub(crate) fn footprinting(
                 args: interp
                     .operand_stack
                     .last_n(field_count as usize)?
-                    .map(|t| TracedValueBuilder::new(t).build(&interp.footprints.state.reverse_local_value_addressings).items)
+                    .map(|t| TracedValueBuilder::new(t).build(&footprints.state.reverse_local_value_addressings).items)
                     .collect::<Vec<_>>(),
             }
         },
@@ -358,7 +353,7 @@ pub(crate) fn footprinting(
                     .operand_stack
                     .last_n(1)?
                     .last()
-                    .map(|t| TracedValueBuilder::new(t).build(&interp.footprints.state.reverse_local_value_addressings).items)
+                    .map(|t| TracedValueBuilder::new(t).build(&footprints.state.reverse_local_value_addressings).items)
                     .unwrap(),
             }
         },
@@ -371,7 +366,7 @@ pub(crate) fn footprinting(
                     .operand_stack
                     .last_n(1)?
                     .last()
-                    .map(|t| TracedValueBuilder::new(t).build(&interp.footprints.state.reverse_local_value_addressings).items)
+                    .map(|t| TracedValueBuilder::new(t).build(&footprints.state.reverse_local_value_addressings).items)
                     .unwrap(),
             }
         },
@@ -382,7 +377,7 @@ pub(crate) fn footprinting(
                 .last()
                 .unwrap()
                 .copy_value()?;
-            let reference = TracedValueBuilder::new(&reference_value).build_as_reference(&interp.footprints.state.reverse_local_value_addressings).unwrap();
+            let reference = TracedValueBuilder::new(&reference_value).build_as_reference(&footprints.state.reverse_local_value_addressings).unwrap();
             let value = reference_value
                 .value_as::<move_vm_types::values::Reference>()?
                 .read_ref()?;
@@ -400,7 +395,7 @@ pub(crate) fn footprinting(
                 .unwrap()
                 .copy_value()?;
 
-            let reference = TracedValueBuilder::new(&reference_value).build_as_reference(&interp.footprints.state.reverse_local_value_addressings).unwrap();
+            let reference = TracedValueBuilder::new(&reference_value).build_as_reference(&footprints.state.reverse_local_value_addressings).unwrap();
 
             let old_value = reference_value
                 .value_as::<move_vm_types::values::Reference>()?
@@ -439,8 +434,7 @@ pub(crate) fn footprinting(
                 .copy_value()?
                 .cast()?;
             let addr = reference.raw_address();
-            let reference = interp
-                .footprints
+            let reference = footprints
                 .state
                 .reverse_local_value_addressings
                 .get(&addr)
@@ -463,8 +457,7 @@ pub(crate) fn footprinting(
                 .copy_value()?
                 .cast()?;
             let addr = reference.raw_address();
-            let reference = interp
-                .footprints
+            let reference = footprints
                 .state
                 .reverse_local_value_addressings
                 .get(&addr)
@@ -492,8 +485,7 @@ pub(crate) fn footprinting(
             Operation::BorrowField {
                 fh_idx: fh_idx.0,
                 imm: true,
-                reference: interp
-                    .footprints
+                reference: footprints
                     .state
                     .reverse_local_value_addressings
                     .get(&addr)
@@ -511,8 +503,7 @@ pub(crate) fn footprinting(
                 .copy_value()?
                 .cast()?;
             let addr = reference.raw_address();
-            let reference = interp
-                .footprints
+            let reference = footprints
                 .state
                 .reverse_local_value_addressings
                 .get(&addr)
@@ -667,8 +658,7 @@ pub(crate) fn footprinting(
                 .collect::<PartialVMResult<Vec<_>>>()?
                 .pop()
                 .unwrap();
-            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&interp
-                .footprints
+            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&footprints
                 .state
                 .reverse_local_value_addressings).unwrap();
 
@@ -696,8 +686,7 @@ pub(crate) fn footprinting(
                 .collect::<PartialVMResult<Vec<_>>>()?;
             let idx: u64 = values.pop().unwrap().value_as()?;
             let vec_ref = values.pop().unwrap();
-            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&interp
-                .footprints
+            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&footprints
                 .state
                 .reverse_local_value_addressings).unwrap();
             // let vec_ref = vec_ref.value_as::<VectorRef>()?;
@@ -725,8 +714,7 @@ pub(crate) fn footprinting(
             let elem = values.pop().unwrap();
             let vec_ref = values.pop().unwrap();
 
-            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&interp
-                .footprints
+            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&footprints
                 .state
                 .reverse_local_value_addressings).unwrap();
 
@@ -754,8 +742,7 @@ pub(crate) fn footprinting(
                 .map(|v| v.copy_value())
                 .collect::<PartialVMResult<Vec<_>>>()?;
             let vec_ref = values.pop().unwrap();
-            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&interp
-                .footprints
+            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&footprints
                 .state
                 .reverse_local_value_addressings).unwrap();
 
@@ -791,8 +778,7 @@ pub(crate) fn footprinting(
             let idx2: u64 = values.pop().unwrap().value_as()?;
             let idx1: u64 = values.pop().unwrap().value_as()?;
             let vec_ref = values.pop().unwrap();
-            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&interp
-                .footprints
+            let reference = TracedValueBuilder::new(&vec_ref).build_as_reference(&footprints
                 .state
                 .reverse_local_value_addressings).unwrap();
             let vec_ref = vec_ref.value_as::<VectorRef>()?;
@@ -836,7 +822,7 @@ pub(crate) fn footprinting(
     };
 
     let inst = serialize_instruction(instr);
-    interp.footprints.data.push(Footprint {
+    footprints.data.push(Footprint {
         op: inst.opcodes as u8,
         aux0: inst.aux0,
         aux1: inst.aux1,
